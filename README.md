@@ -89,7 +89,8 @@ To verify it's working, visit a site like `https://ifconfig.me` in Firefox. The 
 | `ssh-socks config path` | Print config file path |
 | `ssh-socks firefox show` | Print the `user.js` block to stdout |
 | `ssh-socks firefox apply` | Inject the block into the default profile's `user.js` |
-| `ssh-socks firefox reset` | Remove our block from `user.js` |
+| `ssh-socks firefox reset` | Replace the apply block with a defaults-restoring block |
+| `ssh-socks firefox purge` | Remove any ssh-socks-cli block from `user.js` entirely |
 | `ssh-socks firefox profiles` | List detected Firefox profiles |
 | `ssh-socks --version` | Show version |
 
@@ -128,27 +129,55 @@ user_pref("network.proxy.type", 1);
 user_pref("network.proxy.socks", "127.0.0.1");
 user_pref("network.proxy.socks_port", 1080);
 user_pref("network.proxy.socks_version", 5);
+
+// DNS leak prevention (both old and Firefox-128+ pref names)
 user_pref("network.proxy.socks_remote_dns", true);
-user_pref("network.proxy.no_proxies_on", "localhost, 127.0.0.1");
-user_pref("network.proxy.failover_direct", false);
-user_pref("network.proxy.allow_hijacking_localhost", true);
-user_pref("media.peerconnection.enabled", false);
+user_pref("network.proxy.socks5_remote_dns", true);
 user_pref("network.dns.disablePrefetch", true);
+user_pref("network.dns.disablePrefetchFromHTTPS", true);
+
+// Force proxy, never fall back to direct (which would leak via the VPN)
+user_pref("network.proxy.failover_direct", false);
+user_pref("network.proxy.allow_bypass", false);
+
+// Disable DoH (TRR) — would race the SOCKS tunnel and leak DNS
+user_pref("network.trr.mode", 5);
+
+// Disable speculative connections / prefetch (they bypass the proxy)
+user_pref("network.http.speculative-parallel-limit", 0);
+user_pref("network.predictor.enabled", false);
+user_pref("network.prefetch-next", false);
+
+// Disable captive portal / connectivity probes that hit Mozilla directly
+user_pref("network.captive-portal-service.enabled", false);
+user_pref("network.connectivity-service.enabled", false);
+
+// WebRTC leak prevention
+user_pref("media.peerconnection.enabled", false);
 // END ssh-socks-cli managed block
 ```
 
-Each line has a reason:
+Each block is there for a reason:
 
 | Pref | Why |
 |---|---|
 | `network.proxy.type=1` | Enable manual proxy mode |
 | `network.proxy.socks*` | Point Firefox at `127.0.0.1:1080` as SOCKS v5 |
-| `network.proxy.socks_remote_dns=true` | **Critical** — DNS resolution happens at the SSH server, not through your corporate resolver. Without this you leak every domain you visit. |
-| `network.proxy.failover_direct=false` | If the tunnel drops, Firefox will NOT silently fall back to direct (i.e., the VPN). It will show a proxy error instead. This is what you want. |
-| `media.peerconnection.enabled=false` | WebRTC can bypass the SOCKS proxy and leak your real LAN IP |
-| `network.dns.disablePrefetch=true` | Prevents DNS prefetches going through the system resolver |
+| `network.proxy.socks_remote_dns` + `socks5_remote_dns` | **Critical** — DNS resolution happens at the SSH server, not through your corporate resolver. Firefox 128 introduced a new pref name; we set both. |
+| `network.trr.mode=5` | **Critical** — disable DNS-over-HTTPS. Otherwise Firefox would race TRR against the SOCKS tunnel and leak DNS. |
+| `network.proxy.failover_direct=false` + `allow_bypass=false` | If the tunnel drops, Firefox will NOT silently fall back to direct (i.e., the VPN). |
+| `network.http.speculative-parallel-limit=0`, `predictor.enabled=false`, `prefetch-next=false` | Firefox opens speculative TCP connections before the proxy is consulted; disable them. |
+| `network.captive-portal-service.enabled=false` | Firefox pings `detectportal.firefox.com` directly on startup, bypassing the proxy. |
+| `media.peerconnection.enabled=false` | WebRTC can bypass the SOCKS proxy and leak your real LAN IP. |
 
-Your existing `user.js` is backed up to `user.js.sshsocks-backup-<timestamp>` before any changes. `ssh-socks firefox reset` removes only our block, leaving the rest of your prefs intact.
+### Reverting Firefox changes (two-step)
+
+Firefox copies `user_pref` values into `prefs.js` at shutdown, so simply deleting the apply block from `user.js` is not enough to undo the previous session's changes. The rollback is therefore a two-step operation:
+
+1. **`ssh-socks firefox reset`** — replaces the apply block with a *defaults-restoring* block that sets every touched pref back to its Firefox factory value. **Restart Firefox once.** On that restart, Firefox overwrites `prefs.js` with the defaults.
+2. **`ssh-socks firefox purge`** — removes the block from `user.js` entirely, leaving the rest of your prefs intact.
+
+Your existing `user.js` is backed up to `user.js.sshsocks-backup-<timestamp>` before every write.
 
 ## Security notes
 

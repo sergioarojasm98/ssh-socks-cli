@@ -88,6 +88,13 @@ def build_command(tunnel: TunnelConfig, binary: str, is_autossh: bool) -> list[s
         f"StrictHostKeyChecking={tunnel.strict_host_key_checking}",
         "-o",
         f"ConnectTimeout={tunnel.connect_timeout}",
+        # BatchMode + PasswordAuthentication=no: the tunnel runs detached with no TTY,
+        # so any interactive prompt (passphrase, TOFU confirm) would hang silently.
+        # Fail fast instead; point users to ssh-add / a keyless config.
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "PasswordAuthentication=no",
     ]
     if tunnel.compression:
         cmd.append("-C")

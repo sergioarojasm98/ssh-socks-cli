@@ -64,6 +64,14 @@ def test_build_command_has_keepalive_options() -> None:
     assert "ExitOnForwardFailure=yes" in cmd
 
 
+def test_build_command_enforces_batch_mode() -> None:
+    """Detached tunnel must fail fast on prompts, not hang silently."""
+    t = TunnelConfig(host="h", user="u")
+    cmd = build_command(t, "ssh", is_autossh=False)
+    assert "BatchMode=yes" in cmd
+    assert "PasswordAuthentication=no" in cmd
+
+
 def test_build_command_compression_toggle() -> None:
     t_on = TunnelConfig(host="h", user="u", compression=True)
     t_off = TunnelConfig(host="h", user="u", compression=False)

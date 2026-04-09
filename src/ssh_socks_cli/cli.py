@@ -276,7 +276,12 @@ def firefox_apply(
 def firefox_reset(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
-    """Remove the ssh-socks-cli block from the default profile's user.js."""
+    """Write a defaults-restoring block so Firefox clears the SOCKS5 settings on restart.
+
+    This is a two-step rollback: reset first, restart Firefox so it overwrites prefs.js
+    with Firefox defaults, then optionally `ssh-socks firefox purge` to remove the block
+    entirely.
+    """
     try:
         profile = firefox.default_profile()
     except firefox.FirefoxError as e:
@@ -284,14 +289,48 @@ def firefox_reset(
         raise typer.Exit(code=1) from e
 
     console.print(f"Default profile: [cyan]{profile.name}[/cyan] ({profile.path})")
-    if not yes and not Confirm.ask("Remove ssh-socks-cli block from user.js?", default=True):
+    if not yes and not Confirm.ask(
+        "Replace the ssh-socks-cli block with a defaults-restoring block?", default=True
+    ):
         raise typer.Exit(code=1)
     try:
         written = firefox.reset(profile)
     except firefox.FirefoxError as e:
         err_console.print(str(e))
         raise typer.Exit(code=1) from e
-    console.print(f"[green]✓[/green] Cleaned {written}")
+    console.print(f"[green]✓[/green] Wrote defaults block to {written}")
+    console.print(
+        "[yellow]Restart Firefox for the defaults to take effect.[/yellow] "
+        "Then run [cyan]ssh-socks firefox purge[/cyan] to remove the block completely."
+    )
+
+
+@firefox_app.command("purge")
+def firefox_purge(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Remove any ssh-socks-cli block (apply or reset) from user.js entirely.
+
+    Only safe after you've restarted Firefox at least once with a `reset` block in place.
+    Otherwise previously-applied prefs will still live in prefs.js.
+    """
+    try:
+        profile = firefox.default_profile()
+    except firefox.FirefoxError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1) from e
+
+    console.print(f"Default profile: [cyan]{profile.name}[/cyan] ({profile.path})")
+    if not yes and not Confirm.ask(
+        "Completely remove ssh-socks-cli block from user.js?", default=True
+    ):
+        raise typer.Exit(code=1)
+    try:
+        written = firefox.purge(profile)
+    except firefox.FirefoxError as e:
+        err_console.print(str(e))
+        raise typer.Exit(code=1) from e
+    console.print(f"[green]✓[/green] Purged {written}")
 
 
 @firefox_app.command("profiles")
