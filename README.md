@@ -18,6 +18,105 @@ The traditional workaround is:
 
 **ssh-socks-cli** automates all of that in one CLI.
 
+## ⚠️ You need an SSH exit server
+
+**This tool is useless without one.** `ssh-socks-cli` is a **client** — it manages the connection from your laptop to an SSH server *you already own*, and tunnels Firefox traffic through it. **The server is the part that actually exits to the internet on your behalf.** Your Firefox's public IP becomes whatever that server's public IP is.
+
+Any of the following works, as long as it runs `sshd` and is reachable from your laptop:
+
+- **A VPS** (DigitalOcean, Hetzner, Linode, OVH, Vultr, AWS Lightsail, Fly.io, …). $3–6/month is plenty. Most reliable option, works from anywhere you have internet.
+- **A Raspberry Pi running 24/7 at home.** Requires your router to port-forward SSH (and ideally a dynamic-DNS service like DuckDNS or Cloudflare Tunnel if your ISP doesn't give you a static IP). **An RPi Zero 2W is enough** — this workload is tiny.
+- **A home server / NAS** with SSH exposed (Synology, Unraid, TrueNAS, …).
+- **An old laptop or mini-PC** left plugged in at home running Linux.
+- **A friend's server** where you have an account — only if you trust them, because *all your Firefox traffic will exit from there*.
+
+**What the server needs:**
+- `sshd` running and reachable on some port (22 or custom).
+- Your SSH public key in `~/.ssh/authorized_keys` for the user you'll connect as.
+- Outbound internet access.
+- **That's it.** No extra software, no SOCKS5 daemon — OpenSSH's `-D` flag *is* a SOCKS5 server, built in.
+
+**What the server does NOT need:**
+- A public static IP (dynamic DNS works).
+- A SOCKS5 server, Shadowsocks, V2Ray, or anything like that.
+- Significant resources. An RPi Zero 2W or a $3/month VPS handles this trivially.
+
+**Before running `ssh-socks init`, verify you can already SSH in manually:**
+```bash
+ssh user@your-server.example.com
+# If that works, you're ready. If it doesn't, fix your SSH access first —
+# ssh-socks-cli cannot help you debug an unreachable server.
+```
+
+## How it works
+
+### Before — corporate VPN captures everything
+
+```mermaid
+flowchart LR
+    subgraph laptop["💻 Corporate laptop"]
+        FF["Firefox"]
+        Other["Chrome / Slack /<br/>Outlook / git / ..."]
+    end
+    VPN["🛡️ Corporate VPN<br/>(GlobalProtect / AnyConnect / Zscaler)"]
+    Net["🌐 Internet"]
+
+    FF --> VPN
+    Other --> VPN
+    VPN -->|"logs + DNS<br/>+ filters"| Net
+```
+
+Every byte your laptop sends goes through the corporate gateway. Your employer sees all DNS lookups, can block content, and logs connections.
+
+### After — Firefox exits through your own server
+
+```mermaid
+flowchart LR
+    subgraph laptop["💻 Corporate laptop"]
+        FF["Firefox"]
+        CLI["ssh-socks-cli<br/>(autossh)<br/>127.0.0.1:1080"]
+        Other["Chrome / Slack /<br/>Outlook / git / ..."]
+    end
+    VPS["🖥️ Your SSH server<br/>(VPS / RPi / home server)"]
+    VPN["🛡️ Corporate VPN"]
+    Personal["🌐 Personal internet"]
+    Corp["🏢 Corporate resources"]
+
+    FF -->|"SOCKS5"| CLI
+    CLI ==>|"encrypted<br/>SSH tunnel"| VPS
+    VPS --> Personal
+    Other --> VPN
+    VPN --> Corp
+
+    style CLI fill:#2d5f2d,color:#fff,stroke:#4caf50
+    style VPS fill:#1a3a5c,color:#fff,stroke:#2196f3
+```
+
+Only **Firefox** is re-routed. Every other app (Chrome, Slack, Outlook, git, your IDE) keeps using the corporate VPN exactly as before. The corporate VPN is not bypassed for those — this is a split-tunnel, not a full bypass.
+
+### What happens on a single Firefox request
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FF as Firefox
+    participant Tun as ssh-socks-cli<br/>(local SOCKS5<br/>127.0.0.1:1080)
+    participant VPS as Your SSH server
+    participant Site as reddit.com
+
+    FF->>Tun: SOCKS5: connect to<br/>"reddit.com:443"<br/>(hostname, not IP)
+    Note over Tun: Tunneled inside the<br/>encrypted SSH connection
+    Tun->>VPS: forwarded SOCKS5 request
+    VPS->>VPS: DNS resolve "reddit.com"<br/>(using VPS's resolver,<br/>NOT corporate DNS)
+    VPS->>Site: TCP connect to<br/>151.101.1.140:443
+    Site-->>VPS: TLS handshake
+    VPS-->>Tun: bytes over SSH
+    Tun-->>FF: bytes over SOCKS5
+    Note over Site: Sees your VPS's IP,<br/>not your laptop's
+```
+
+Key point: the **hostname** is resolved at the VPS, not at your laptop. That's what `network.proxy.socks_remote_dns = true` buys you — without it, Firefox would ask the local OS resolver (= corporate DNS pushed by GlobalProtect) before sending the request through the tunnel, leaking every domain you visit to your employer.
+
 ## Features
 
 - **One-command tunnel lifecycle** — `start`, `stop`, `status`, `restart`, `logs`
@@ -30,15 +129,17 @@ The traditional workaround is:
 
 ## Prerequisites
 
+**On your laptop:**
 - Python **3.11+**
-- `ssh` (OpenSSH client). Any modern macOS, Linux, or Windows 10/11 already has it.
-- `autossh` *(optional but recommended)* — for automatic reconnection when your network flaps
+- `ssh` (OpenSSH client) — any modern macOS, Linux, or Windows 10/11 already has it
+- `autossh` *(optional but strongly recommended)* — for automatic reconnection when your network flaps
   - macOS: `brew install autossh`
   - Debian/Ubuntu: `sudo apt install autossh`
   - Fedora/RHEL: `sudo dnf install autossh`
   - Arch: `sudo pacman -S autossh`
-- A reachable SSH server you own (VPS, home server, Raspberry Pi with port-forwarded SSH — anything that can accept an SSH connection and run `sshd`)
-- An SSH key already configured for that server (password auth works too but keys are strongly recommended)
+- Firefox (obviously) — other browsers are out of scope for v0.1
+
+**On your exit server:** see the [SSH exit server](#-you-need-an-ssh-exit-server) section above. TL;DR: anything running `sshd` that you can SSH into manually — a VPS, a Raspberry Pi at home, a NAS, whatever.
 
 ## Installation
 
