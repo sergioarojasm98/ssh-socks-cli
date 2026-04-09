@@ -209,8 +209,9 @@ def start(cfg: AppConfig) -> int:
             f"Check `ssh-socks logs` for details."
         )
 
-    _write_pid(proc.pid)
-    return proc.pid
+    pid: int = proc.pid
+    _write_pid(pid)
+    return pid
 
 
 def stop(timeout: float = 5.0) -> bool:

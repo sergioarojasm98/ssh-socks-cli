@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -88,11 +88,11 @@ def from_dict(data: dict[str, Any]) -> AppConfig:
 
 
 def _tunnel_fields() -> set[str]:
-    return {f.name for f in TunnelConfig.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+    return {f.name for f in fields(TunnelConfig)}
 
 
 def _firefox_fields() -> set[str]:
-    return {f.name for f in FirefoxConfig.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+    return {f.name for f in fields(FirefoxConfig)}
 
 
 def save(cfg: AppConfig, path: Path | None = None) -> Path:
